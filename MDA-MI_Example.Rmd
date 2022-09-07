@@ -8,6 +8,7 @@ output: html_document
 knitr::opts_chunk$set(echo = TRUE)
 
 ### Import libraries
+# install.packages("tidyverse", "mice", "skimr", "lavaan", "semTools", "kableExtra")
 library(tidyverse)
 library(skimr)
 library(mice)
