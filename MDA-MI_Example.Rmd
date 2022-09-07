@@ -1,0 +1,141 @@
+---
+author: "Butovens Médé"
+date: "4/1/2021"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+### Import libraries
+library(tidyverse)
+library(skimr)
+library(mice)
+library(lavaan)
+library(semTools)
+library(kableExtra)
+
+### Load data
+antisoc_data <- read_csv("antisocial.csv", na = "-9")
+```
+
+
+# 1: Exploratory data augmentation chain (chain = 1) with one imputation (ndatasets = 1) using Mplus 
+## a)
+
+* Based on the tech 8 (history) output, 100 burn-in iterations are used (as default) in Mplus for the imputation. (In a more general fashion, it appears that the default burn-in in Mplus is half of the number of iterations requested).
+
+## b)
+
+* The convergence of the data algorithm means that the chain(s) of imputed data set and the model parameters have become stable and no longer change in a systematic fashion. Based on the iteration history, it seems like the algorithm converged after 200 iterations (i.e. PSR < 1.1 at 200). But if we increase the number of iterations to 1000 we see that PSR remains consistently below 1.1 only after 400 iterations.
+
+##  c)
+
+* In this example, the trace plots show each simulated values for mean and the variance of the variable Read4 at each iteration. The values of the simulated parameter estimates are on the y-axis of the plots, while the iterations are on the x-axis. The black part of the chain on these trace plots are the discarded simulated values/iterations (also called burn-in iterations), while the red part are the chain are the simulated values/iterations that are saved. The trace plots allow us to determine if the parameters have converged (i.e. if the imputation solution is acceptable.)
+
+# 2: MI using R mice with number of imputations = 100 and number of iterations = 5
+```{r}
+### Look at data
+skim(antisoc_data)
+
+### Look at the default settings
+imp <- mice(antisoc_data,  m = 1, print = F)
+
+### imputation methods
+imp_meth <- imp$meth
+imp_meth
+
+### Reset imputation method from predictive mean matching to norm
+imp_meth[ c('anti2', 'anti3', 'anti4','read2', 'read3','read4')] <- "norm"
+imp_meth
+
+### predictor matrix
+imp$pred
+
+### Set variables that are not used in imputation step to zero (in imputation matrix)
+imp_pred <- imp$pred
+imp_pred[ ,c("antigen")] <- 0 
+imp_pred
+
+### Set number of imputation 
+m <- 100
+
+### Set number of iteration
+iteration <- 5
+# iteration <- 10
+
+### Multiple Imputation: Imputation step
+imputation <- mice(antisoc_data, # Dataset
+            m = m, # number of generated imputed datasets
+            meth = imp_meth, # imputation method used
+            pred = imp_pred, # predictor variables used to impute missing data
+            maxit = iteration, # the number of total iterations (number of burn-ins+ 1)
+            seed = 29042,
+            print = F)
+
+### Look at the imputed datasets
+complete(imputation, "long")
+```
+
+
+## a)
+```{r}
+### Plot
+# pdf("mice_trace_plot_Butovens.pdf")
+plot(imputation)
+# dev.off()
+```
+
+## b)
+* I think that 5 iterations might not be good enough for the MICE algorithm to converge in this MI analysis.  When looking at the trace plots for the means and variances of all the variables that have missing data, we can see that for some of those parameter estimates (e.g. sd anti2, sd anti3, sd read3) there seem to be either an upward trend or downward trend. However, then chains of the different imputation are well-mixed with each other so I think if we were to double or triple the number of iterations, it might be enough to ascertain that we cannot disprove lack of convergence.
+
+# 3: Regression analysis with 100 imputed data sets (done in Mplus)
+```{r}
+# Robust FIML (MLR) was used in the analysis step to mitigate the impact of nonnormality
+
+### APA style table of results
+table <- data.frame(variable = c("anti1", "homecog", "homeemo", "male"),
+                    Estimate = c(-0.152, 0.158, 0.131, 0.000),
+                    SE = c(0.058, 0.053, 0.053, 0.054),
+                    z_score = c(-2.644, 2.988, 2.462, 0.003),
+                    p_Value = c(0.008, 0.003, 0.014, 0.997)
+                    )
+
+### Create table
+table %>% 
+  kbl(caption = "Summary table of MI results") %>% 
+  kable_classic(full_width = F, html_font = "Cambria")
+```
+
+* For this regression analysis which used imputed an data set and the MLR estimator to mitigate the impact of non-normality we can see that:
+
+* for one unit of change in anti-social behavior score, the average final reading scores in females decreases by about 0.152 points (if this is the metric used), everything else being constant. 
+
+* for one unit of change in at-home cognitive stimulation score, the average final reading scores in females increases by about 0.158 points, everything else being constant. 
+
+* for one unit of change in at-home emotional support score, the average final reading scores in females increases by about 0.131 points, everything else being constant. 
+
+* and that being a male does not seem to have significant effect on the final reading scores compare to being a female.
+
+# 3  (same as above in R )
+```{r}
+# Robust FIML (MLR) was used in the analysis step to mitigate the impact of nonnormality
+
+### Multiple Imputation: Analysis step
+imputation_nnorm <- mice(antisoc_data, 
+                         m = m,
+                         maxit = iteration, # the number of total iterations (number of burn-ins+ 1)
+                         seed = 29042,
+                         print = F)
+
+plot(imputation_nnorm)
+
+# Regression coefficient for each imputed dataset
+fit <- with(data = imputation_nnorm, expr =  lm(read4 ~ anti1 + homecog + homeemo + male))
+
+### Step-3: Pool the results
+pool_fit <- pool(fit)
+summary(pool_fit)
+pool_fit
+```
+
